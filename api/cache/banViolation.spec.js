@@ -102,7 +102,8 @@ describe('banViolation', () => {
     errorMessage.prev_count = 19;
     errorMessage.violation_count = 39;
     await banViolation(req, res, errorMessage);
-    expect(res.clearCookie).toHaveBeenCalledWith('refreshToken');
+    // Fenrix: clearCookie must pass the same `path` the cookie was set with (getAuthCookiePath).
+    expect(res.clearCookie).toHaveBeenCalledWith('refreshToken', { path: '/' });
   });
 
   it('should not ban if violation_count does not change', async () => {

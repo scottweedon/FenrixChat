@@ -12,6 +12,7 @@ const {
   math,
   isEnabled,
   checkEmailConfig,
+  getAuthCookiePath,
   setCloudFrontCookies,
   getCloudFrontConfig,
   parseCloudFrontCookieScope,
@@ -676,12 +677,14 @@ const setAuthTokens = async (userId, res, _session = null, req = null) => {
       httpOnly: true,
       secure: shouldUseSecureCookie(),
       sameSite: 'strict',
+      path: getAuthCookiePath(),
     });
     res.cookie('token_provider', 'librechat', {
       expires: new Date(refreshTokenExpires),
       httpOnly: true,
       secure: shouldUseSecureCookie(),
       sameSite: 'strict',
+      path: getAuthCookiePath(),
     });
 
     setCloudFrontAuthCookies(req, res, user, { userId: user?._id ?? userId });
@@ -788,6 +791,7 @@ const setOpenIDAuthTokens = (
       httpOnly: true,
       secure: shouldUseSecureCookie(),
       sameSite: 'strict',
+      path: getAuthCookiePath(),
     });
 
     /** Store tokens server-side in session to avoid large cookies */
@@ -806,6 +810,7 @@ const setOpenIDAuthTokens = (
         httpOnly: true,
         secure: shouldUseSecureCookie(),
         sameSite: 'strict',
+        path: getAuthCookiePath(),
       });
       if (tokenset.id_token) {
         res.cookie('openid_id_token', tokenset.id_token, {
@@ -813,6 +818,7 @@ const setOpenIDAuthTokens = (
           httpOnly: true,
           secure: shouldUseSecureCookie(),
           sameSite: 'strict',
+          path: getAuthCookiePath(),
         });
       }
     }
@@ -823,6 +829,7 @@ const setOpenIDAuthTokens = (
       httpOnly: true,
       secure: shouldUseSecureCookie(),
       sameSite: 'strict',
+      path: getAuthCookiePath(),
     });
     if (userId && isEnabled(process.env.OPENID_REUSE_TOKENS)) {
       /** JWT-signed user ID cookie for image path validation when OPENID_REUSE_TOKENS is enabled */
@@ -834,6 +841,7 @@ const setOpenIDAuthTokens = (
         httpOnly: true,
         secure: shouldUseSecureCookie(),
         sameSite: 'strict',
+        path: getAuthCookiePath(),
       });
     }
 

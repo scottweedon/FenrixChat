@@ -1,6 +1,6 @@
 const { logger } = require('@librechat/data-schemas');
 const { ViolationTypes } = require('librechat-data-provider');
-const { isEnabled, math, removePorts } = require('@librechat/api');
+const { isEnabled, math, removePorts, getAuthCookiePath } = require('@librechat/api');
 const { deleteAllUserSessions } = require('~/models');
 const getLogStores = require('./getLogStores');
 
@@ -52,11 +52,13 @@ const banViolation = async (req, res, errorMessage) => {
     delete req.session.openidTokens;
   }
 
-  res.clearCookie('refreshToken');
-  res.clearCookie('openid_access_token');
-  res.clearCookie('openid_id_token');
-  res.clearCookie('openid_user_id');
-  res.clearCookie('token_provider');
+  // Fenrix: must match the `path` the cookie was set with (see getAuthCookiePath) or it won't clear.
+  const cookiePath = { path: getAuthCookiePath() };
+  res.clearCookie('refreshToken', cookiePath);
+  res.clearCookie('openid_access_token', cookiePath);
+  res.clearCookie('openid_id_token', cookiePath);
+  res.clearCookie('openid_user_id', cookiePath);
+  res.clearCookie('token_provider', cookiePath);
 
   const banLogs = getLogStores(ViolationTypes.BAN);
   const duration = errorMessage.duration || banLogs.opts.ttl;

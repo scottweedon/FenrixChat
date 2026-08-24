@@ -10,6 +10,7 @@ jest.mock('cookie');
 jest.mock('@librechat/api', () => ({
   isEnabled: (...args) => mockIsEnabled(...args),
   clearCloudFrontCookies: (...args) => mockClearCloudFrontCookies(...args),
+  getAuthCookiePath: () => '/',
 }));
 jest.mock('@librechat/data-schemas', () => ({ logger: mockLogger }));
 jest.mock('~/server/services/AuthService', () => ({
@@ -253,11 +254,14 @@ describe('LogoutController', () => {
 
       await logoutController(req, res);
 
-      expect(res.clearCookie).toHaveBeenCalledWith('refreshToken');
-      expect(res.clearCookie).toHaveBeenCalledWith('openid_access_token');
-      expect(res.clearCookie).toHaveBeenCalledWith('openid_id_token');
-      expect(res.clearCookie).toHaveBeenCalledWith('openid_user_id');
-      expect(res.clearCookie).toHaveBeenCalledWith('token_provider');
+      // Fenrix: clearCookie must pass the same `path` the cookie was set with (getAuthCookiePath)
+      // or the browser won't remove a cookie scoped to a tenant's subpath.
+      const cookiePath = { path: '/' };
+      expect(res.clearCookie).toHaveBeenCalledWith('refreshToken', cookiePath);
+      expect(res.clearCookie).toHaveBeenCalledWith('openid_access_token', cookiePath);
+      expect(res.clearCookie).toHaveBeenCalledWith('openid_id_token', cookiePath);
+      expect(res.clearCookie).toHaveBeenCalledWith('openid_user_id', cookiePath);
+      expect(res.clearCookie).toHaveBeenCalledWith('token_provider', cookiePath);
     });
 
     it('calls clearCloudFrontCookies on successful logout', async () => {

@@ -1,5 +1,5 @@
 const cookies = require('cookie');
-const { isEnabled, clearCloudFrontCookies } = require('@librechat/api');
+const { isEnabled, getAuthCookiePath, clearCloudFrontCookies } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { logoutUser } = require('~/server/services/AuthService');
 const { getOpenIdConfig } = require('~/strategies');
@@ -39,11 +39,14 @@ const logoutController = async (req, res) => {
     const logout = await logoutUser(req, refreshToken);
     const { status, message } = logout;
 
-    res.clearCookie('refreshToken');
-    res.clearCookie('openid_access_token');
-    res.clearCookie('openid_id_token');
-    res.clearCookie('openid_user_id');
-    res.clearCookie('token_provider');
+    // Fenrix: clearCookie must be passed the same `path` used when the cookie was set
+    // (see AuthService.getAuthCookiePath), or the browser won't match/remove it.
+    const cookiePath = { path: getAuthCookiePath() };
+    res.clearCookie('refreshToken', cookiePath);
+    res.clearCookie('openid_access_token', cookiePath);
+    res.clearCookie('openid_id_token', cookiePath);
+    res.clearCookie('openid_user_id', cookiePath);
+    res.clearCookie('token_provider', cookiePath);
     clearCloudFrontCookies(res, {
       userId: req.user?.id ?? req.user?._id?.toString?.(),
       tenantId: req.user?.tenantId,

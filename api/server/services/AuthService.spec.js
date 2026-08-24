@@ -25,6 +25,7 @@ jest.mock(
     isEmailDomainAllowed: jest.fn(),
     math: jest.fn((val, fallback) => (val ? Number(val) : fallback)),
     shouldUseSecureCookie: jest.fn(() => false),
+    getAuthCookiePath: jest.fn(() => '/'),
     resolveAppConfigForUser: jest.fn(async (_getAppConfig, _user) => ({})),
     setCloudFrontCookies: jest.fn(() => true),
     getCloudFrontConfig: jest.fn(() => ({
