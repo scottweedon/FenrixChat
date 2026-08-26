@@ -11,6 +11,7 @@ jest.mock('@librechat/api', () => ({
   isEnabled: (...args) => mockIsEnabled(...args),
   clearCloudFrontCookies: (...args) => mockClearCloudFrontCookies(...args),
   getAuthCookiePath: () => '/',
+  getSsoTokenCookiePath: () => '/',
 }));
 jest.mock('@librechat/data-schemas', () => ({ logger: mockLogger }));
 jest.mock('~/server/services/AuthService', () => ({
@@ -262,6 +263,7 @@ describe('LogoutController', () => {
       expect(res.clearCookie).toHaveBeenCalledWith('openid_id_token', cookiePath);
       expect(res.clearCookie).toHaveBeenCalledWith('openid_user_id', cookiePath);
       expect(res.clearCookie).toHaveBeenCalledWith('token_provider', cookiePath);
+      expect(res.clearCookie).toHaveBeenCalledWith('fenrix_sso_token', cookiePath);
     });
 
     it('calls clearCloudFrontCookies on successful logout', async () => {

@@ -35,3 +35,24 @@ export function getBasePath(): string {
 export function getAuthCookiePath(): string {
   return `${getBasePath()}/`;
 }
+
+/**
+ * Fenrix: the `path` for the cookie that carries the OIDC id_token to sibling apps served
+ * under the same tenant root (e.g. Langflow at `/root/<tenant_id>/workflows`, embedded via
+ * iframe from `/root/<tenant_id>/app`). Langflow's external-auth reads this cookie directly
+ * (LANGFLOW_EXTERNAL_AUTH_TOKEN_COOKIE) and validates the token itself against Keycloak's
+ * JWKS, so it needs a path one level up from this app's own `getAuthCookiePath()` - scoping
+ * it any wider would leak the token to unrelated tenants; scoping it to `/app/` (like the
+ * other auth cookies) would make it invisible to `/workflows`.
+ * Assumes Fenrix's fixed `/root/<tenant_id>/<app>` URL convention (design-spec.md §9.2):
+ * drops the last path segment of `getBasePath()`. Falls back to `/` when there is no
+ * segment to drop (e.g. DOMAIN_CLIENT has no path, as in the standalone subpath test setup).
+ * @returns {string} The cookie path (e.g. '/root/acme/' or '/')
+ */
+export function getSsoTokenCookiePath(): string {
+  const segments = getBasePath()
+    .split('/')
+    .filter((segment) => segment.length > 0);
+  segments.pop();
+  return segments.length ? `/${segments.join('/')}/` : '/';
+}

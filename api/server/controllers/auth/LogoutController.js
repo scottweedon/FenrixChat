@@ -1,5 +1,10 @@
 const cookies = require('cookie');
-const { isEnabled, getAuthCookiePath, clearCloudFrontCookies } = require('@librechat/api');
+const {
+  isEnabled,
+  getAuthCookiePath,
+  getSsoTokenCookiePath,
+  clearCloudFrontCookies,
+} = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { logoutUser } = require('~/server/services/AuthService');
 const { getOpenIdConfig } = require('~/strategies');
@@ -47,6 +52,7 @@ const logoutController = async (req, res) => {
     res.clearCookie('openid_id_token', cookiePath);
     res.clearCookie('openid_user_id', cookiePath);
     res.clearCookie('token_provider', cookiePath);
+    res.clearCookie('fenrix_sso_token', { path: getSsoTokenCookiePath() });
     clearCloudFrontCookies(res, {
       userId: req.user?.id ?? req.user?._id?.toString?.(),
       tenantId: req.user?.tenantId,

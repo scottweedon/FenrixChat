@@ -1,6 +1,12 @@
 const { logger } = require('@librechat/data-schemas');
 const { ViolationTypes } = require('librechat-data-provider');
-const { isEnabled, math, removePorts, getAuthCookiePath } = require('@librechat/api');
+const {
+  isEnabled,
+  math,
+  removePorts,
+  getAuthCookiePath,
+  getSsoTokenCookiePath,
+} = require('@librechat/api');
 const { deleteAllUserSessions } = require('~/models');
 const getLogStores = require('./getLogStores');
 
@@ -59,6 +65,7 @@ const banViolation = async (req, res, errorMessage) => {
   res.clearCookie('openid_id_token', cookiePath);
   res.clearCookie('openid_user_id', cookiePath);
   res.clearCookie('token_provider', cookiePath);
+  res.clearCookie('fenrix_sso_token', { path: getSsoTokenCookiePath() });
 
   const banLogs = getLogStores(ViolationTypes.BAN);
   const duration = errorMessage.duration || banLogs.opts.ttl;

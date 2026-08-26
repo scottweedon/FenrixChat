@@ -13,6 +13,7 @@ const {
   isEnabled,
   checkEmailConfig,
   getAuthCookiePath,
+  getSsoTokenCookiePath,
   setCloudFrontCookies,
   getCloudFrontConfig,
   parseCloudFrontCookieScope,
@@ -844,6 +845,23 @@ const setOpenIDAuthTokens = (
         path: getAuthCookiePath(),
       });
     }
+
+    /**
+     * Fenrix: carries the OIDC id_token to sibling apps under the same tenant root (e.g.
+     * Langflow, iframed from /app at /root/<tenant_id>/workflows) so they can validate it
+     * themselves against Keycloak's JWKS instead of requiring a second login. Scoped one
+     * path segment above this app's own auth cookies via getSsoTokenCookiePath() - see that
+     * function for why. Only meaningful when appAuthToken is a real IdP-signed JWT (the
+     * id_token case); when it falls back to tokenset.access_token the receiving app's own
+     * EXTERNAL_AUTH_AUDIENCE check will simply reject it rather than a same-audience id_token.
+     */
+    res.cookie('fenrix_sso_token', appAuthToken, {
+      expires: expirationDate,
+      httpOnly: true,
+      secure: shouldUseSecureCookie(),
+      sameSite: 'strict',
+      path: getSsoTokenCookiePath(),
+    });
 
     setCloudFrontAuthCookies(req, res, req.user, { userId, tenantId });
 
