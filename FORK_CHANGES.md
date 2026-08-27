@@ -76,10 +76,34 @@ change so upstream merges stay localized.
   updated for the new cookie; new `getSsoTokenCookiePath` unit tests in `path.spec.ts`.
   `banViolation.spec.js` uses the real `@librechat/api` build (not mocked), so this
   required rebuilding `packages/api` (`npm run build`) before its tests would pass.
-- **Not yet verified:** unit-tested only. End-to-end proof (real OIDC login through
-  LibreChat, confirm `fenrix_sso_token` is set at the tenant-root path, then confirm
-  Langflow's external-auth accepts it) is the next step, together with wiring
-  `LANGFLOW_EXTERNAL_AUTH_*` into the tenant-stack compose template.
+- **Verified:** end-to-end against a real docker-compose-rendered tenant stack (FenrixCloud's
+  provisioner) - obtained a genuine Keycloak `id_token` via the token endpoint, sent it as
+  `fenrix_sso_token` through the real Caddy front door at `/root/<tenant>/workflows/`, and
+  confirmed Langflow validates it and JIT-provisions the user. See FenrixCloud's own
+  `f1d272d` commit for the other half of this (Langflow's `LANGFLOW_EXTERNAL_AUTH_*` wiring).
+
+### Workflows nav item and iframe
+
+- **Files:** `client/src/components/Workflows/WorkflowsView.tsx` (new), `client/src/utils/fenrixWorkflows.ts`
+  (new, `getWorkflowsUrl()`), `client/src/routes/index.tsx` (one new lazy route), `client/src/hooks/Nav/useSideNavLinks.ts`
+  (one new persistent nav link, `useNavigate` import), `client/src/locales/en/translation.json`
+  (`com_ui_workflows`).
+- **Why not fully new-file:** the nav rail's link list (`useSideNavLinks`) is the single
+  source every icon in the left rail renders from (`ExpandedPanel.tsx`'s `NavIconButton`) -
+  there's no separate registration point outside that hook to add a persistent icon without
+  editing it, matching the existing `hide-panel` link's `onClick`-only (no `Component`)
+  pattern for a link that navigates away rather than opening an in-context panel.
+- **Interface:** `getWorkflowsUrl()` mirrors `getSsoTokenCookiePath()` on the server - reads
+  the same `<base href>` the router already uses for its own `basename`
+  (`routes/index.tsx`), drops its last path segment, appends `/workflows/`. `WorkflowsView`
+  is a bare full-panel `<iframe>` at that URL (mobile sidebar toggle only, no other chrome -
+  design-spec.md §5 calls for Langflow branding to read as part of this app). The nav link
+  is unconditional (no permission gating yet - see Expected upstream conflicts).
+- **Expected upstream conflicts:** any upstream change to `useSideNavLinks`'s link-building
+  logic or to `routes/index.tsx`'s children array. Follow-up, not yet done: gating the nav
+  item behind a tenant policy/permission so deployments without Langflow don't show it.
+- **Verified:** typechecks, lints, and builds clean (`npm run build` in `client/`). Live
+  verification (click through in a browser against a real tenant) is the next step.
 
 <!--
 ## Example entry format
