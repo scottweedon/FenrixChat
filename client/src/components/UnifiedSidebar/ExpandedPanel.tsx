@@ -83,6 +83,14 @@ const NavIconButton = memo(function NavIconButton({
     (e: React.MouseEvent<HTMLButtonElement>) => {
       if (link.onClick) {
         link.onClick(e);
+        if (link.activateOnClick) {
+          if (!isActive) {
+            setActive(link.id);
+          }
+          // Workflows navigates to a full-page view, not an in-panel one - there's nothing
+          // left for the expanded side panel to show, so collapse it out of the way too.
+          onCollapse?.();
+        }
         return;
       }
       if (isActive && expanded) {

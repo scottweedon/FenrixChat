@@ -9,6 +9,7 @@ const {
   safeValidatePromptGroupUpdate,
   createEmptyPromptGroupsResponse,
   filterAccessibleIdsBySharedLogic,
+  createApiKeyOrFallbackAuth,
 } = require('@librechat/api');
 const {
   Permissions,
@@ -33,6 +34,8 @@ const {
   getPrompts,
   savePrompt,
   getPrompt,
+  validateAgentApiKey,
+  findUser,
 } = require('~/models');
 const {
   canAccessPromptGroupResource,
@@ -47,6 +50,7 @@ const {
   grantPermission,
 } = require('~/server/services/PermissionService');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
+const { getAppConfig } = require('~/server/services/Config');
 
 const router = express.Router();
 
@@ -61,7 +65,15 @@ const checkPromptCreate = generateCheckAccess({
   getRoleByName,
 });
 
-router.use(requireJwtAuth);
+// Also accepts the same provisioned FENRIX_AGENT_API_KEY used by the Fenrix Skill/Memory
+// Langflow components (see remoteAgentAuth.ts's createApiKeyOrFallbackAuth), so a Fenrix
+// Prompt component can list and read a user's own saved prompts the same way.
+const requireJwtOrApiKeyAuth = createApiKeyOrFallbackAuth(
+  { validateAgentApiKey, findUser, getAppConfig },
+  requireJwtAuth,
+);
+
+router.use(requireJwtOrApiKeyAuth);
 router.use(checkPromptAccess);
 
 const checkGlobalPromptShare = generateCheckAccess({

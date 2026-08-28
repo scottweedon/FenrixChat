@@ -215,6 +215,7 @@ export default function useSideNavLinks({
       icon: Workflow,
       id: 'workflows',
       onClick: () => navigate('/workflows'),
+      activateOnClick: true,
     });
 
     if (includeHidePanel && hidePanel) {

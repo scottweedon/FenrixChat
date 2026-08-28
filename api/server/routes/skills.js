@@ -9,6 +9,7 @@ const {
   getStorageMetadata,
   resolveRequestTenantId,
   restoreTenantContextFromReq,
+  createApiKeyOrFallbackAuth,
 } = require('@librechat/api');
 const { isValidObjectIdString, logger } = require('@librechat/data-schemas');
 const {
@@ -27,6 +28,8 @@ const {
   deleteSkillFile,
   getSkillFileByPath,
   getRoleByName,
+  validateAgentApiKey,
+  findUser,
 } = require('~/models');
 const { requireJwtAuth, canAccessSkillResource } = require('~/server/middleware');
 const {
@@ -38,6 +41,7 @@ const {
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { createFileLimiters } = require('~/server/middleware/limiters/uploadLimiters');
 const { maybeRunGitHubSkillSyncForRequest } = require('~/server/services/Skills/sync');
+const { getAppConfig } = require('~/server/services/Config');
 const configMiddleware = require('~/server/middleware/config/app');
 const { getFileStrategy } = require('~/server/utils/getFileStrategy');
 const {
@@ -105,7 +109,18 @@ const checkSkillCreate = generateCheckAccess({
 const { fileUploadIpLimiter, fileUploadUserLimiter } = createFileLimiters();
 const skillDbMethods = getSkillDbMethods();
 
-router.use(requireJwtAuth);
+// Accepts either a native LibreChat session (the app's own UI) or a personal Agent API key
+// (e.g. FENRIX_AGENT_API_KEY, minted via POST /api/api-keys) - lets a Langflow "Fenrix Skill"
+// component load a user's own skill instructions using the same already-provisioned
+// credential the "Fenrix Agents" model and Fenrix Memory component use. See
+// remoteAgentAuth.ts's createApiKeyOrFallbackAuth for the tenant-context/policy handling
+// this wraps (same pattern as api/server/routes/memories.js).
+const requireJwtOrApiKeyAuth = createApiKeyOrFallbackAuth(
+  { validateAgentApiKey, findUser, getAppConfig },
+  requireJwtAuth,
+);
+
+router.use(requireJwtOrApiKeyAuth);
 router.use(configMiddleware);
 router.use(checkSkillAccess);
 

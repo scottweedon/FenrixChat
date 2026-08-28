@@ -130,6 +130,12 @@ export type NavLink = {
   icon: LucideIcon | React.FC;
   Component?: React.ComponentType;
   onClick?: (e?: React.MouseEvent) => void;
+  /**
+   * For an `onClick`-only link (no `Component`) that navigates to a real page rather than
+   * performing a momentary action (e.g. "Workflows" vs. "hide panel") - marks it active (and
+   * every other nav icon inactive) when clicked, same as a normal panel-selecting link.
+   */
+  activateOnClick?: boolean;
   variant?: 'default' | 'ghost';
   id: string;
 };

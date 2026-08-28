@@ -8,6 +8,7 @@ const {
 } = require('@librechat/api');
 const { syncUserEntraGroupMemberships } = require('~/server/services/PermissionService');
 const { setAuthTokens, setOpenIDAuthTokens } = require('~/server/services/AuthService');
+const { ensureLangflowWorkflowsMcpServer } = require('~/server/services/langflowWorkflows');
 const getLogStores = require('~/cache/getLogStores');
 const { checkBan } = require('~/server/middleware');
 const { generateToken } = require('~/models');
@@ -76,10 +77,13 @@ function createOAuthHandler(redirectUri = domains.client) {
         isEnabled(process.env.OPENID_REUSE_TOKENS) === true
       ) {
         await syncUserEntraGroupMemberships(req.user, req.user.tokenset.access_token);
-        setOpenIDAuthTokens(req.user.tokenset, req, res, {
+        const appAuthToken = setOpenIDAuthTokens(req.user.tokenset, req, res, {
           userId: req.user._id.toString(),
           tenantId: req.user.tenantId,
         });
+        // Fire-and-forget: this user's own Fenrix Workflows MCP server, never awaited so a
+        // slow/unavailable Langflow container can't delay login. Swallows its own errors.
+        ensureLangflowWorkflowsMcpServer(req.user, appAuthToken);
       } else {
         await setAuthTokens(req.user._id, res, null, req);
       }
