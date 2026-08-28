@@ -14,7 +14,7 @@ export default function WorkflowsView() {
   const localize = useLocalize();
   const isSmallScreen = useMediaQuery('(max-width: 768px)');
 
-  useDocumentTitle(`${localize('com_ui_workflows')} | LibreChat`);
+  useDocumentTitle(`${localize('com_ui_workflows')} | Fenrix`);
 
   return (
     <div className="relative flex h-full w-full flex-col">

@@ -31,6 +31,7 @@ const checkRemoteAgentsFeature = generateCheckAccess({
 
 const checkAgentPermission = createCheckRemoteAgentAccess({
   getAgent: db.getAgent,
+  getAgentsByName: (name) => db.getAgents({ name }),
   getEffectivePermissions,
 });
 

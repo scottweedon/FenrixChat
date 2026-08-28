@@ -5,6 +5,7 @@ import { getTenantId, logger, tenantStorage } from '@librechat/data-schemas';
 import { SystemRoles, isRemoteOidcUrlAllowed } from 'librechat-data-provider';
 import type { AppConfig, IUser, RoleMethods, UserMethods } from '@librechat/data-schemas';
 import type { RequestHandler, Request, Response, NextFunction } from 'express';
+import type { Types } from 'mongoose';
 import type { Algorithm, JwtPayload, VerifyOptions } from 'jsonwebtoken';
 import type { TAgentsEndpoint } from 'librechat-data-provider';
 import type { RequestInit } from 'undici';
@@ -740,4 +741,181 @@ export function createRemoteAgentAuth({
     }
   };
   return handler as RequestHandler;
+}
+
+export type RemoteAgentOidcResolveDeps = Pick<
+  RemoteAgentAuthDeps,
+  'findUser' | 'getRolesByNames' | 'updateUser' | 'getAppConfig'
+>;
+
+/**
+ * Resolves the caller from a Keycloak/OIDC bearer token using the same verification
+ * and user-resolution logic {@link createRemoteAgentAuth} uses, without ever writing to
+ * `res` or calling `next` - callers decide what to do on a `null` (not applicable, or
+ * failed) result. Used to layer OIDC bearer support onto routes that must keep their
+ * existing native-session auth working unchanged (e.g. `/api/agent-api-keys`, still
+ * used by LibreChat's own UI via cookie/native JWT) rather than replacing it outright,
+ * which is what {@link createRemoteAgentAuth} does for the agents-API routes it owns.
+ */
+export async function resolveOidcBearerUser(
+  req: Request,
+  { findUser, getRolesByNames, updateUser, getAppConfig }: RemoteAgentOidcResolveDeps,
+): Promise<IUser | null> {
+  try {
+    const initialConfigOptions = getConfigOptions(req);
+    const config = await getAppConfig(initialConfigOptions);
+    const oidcConfig = getEnabledOidcConfig(getRemoteAuthConfig(config));
+    if (!oidcConfig) return null;
+
+    const token = extractBearer(req.headers.authorization);
+    if (token == null) return null;
+
+    let payload: JwtPayload;
+    try {
+      payload = await verifyOidcBearer(token, oidcConfig);
+      if (!hasRequiredScopes(oidcConfig.scope, payload)) return null;
+    } catch {
+      return null;
+    }
+
+    const userResolution = await resolveUser(token, payload, oidcConfig, findUser);
+    if (userResolution.status !== 'resolved') return null;
+
+    if (
+      !(await enforceOidcTenantPolicy(token, userResolution.user, initialConfigOptions, getAppConfig))
+    ) {
+      return null;
+    }
+
+    const selectedRole = await selectOpenIdRoleForOpenIdSync(
+      payload,
+      userResolution.user,
+      getRolesByNames,
+    );
+    if (selectedRole) {
+      userResolution.user.role = selectedRole;
+      userResolution.updateData.role = selectedRole;
+      if (
+        !(await enforceOidcTenantPolicy(
+          token,
+          userResolution.user,
+          initialConfigOptions,
+          getAppConfig,
+        ))
+      ) {
+        return null;
+      }
+    }
+
+    await updateResolvedUser(userResolution, updateUser);
+    return userResolution.user;
+  } catch (err) {
+    logger.warn('[remoteAgentAuth] OIDC bearer resolution failed', err);
+    return null;
+  }
+}
+
+/**
+ * Wraps an existing auth middleware (e.g. `requireJwtAuth`) with an OIDC-bearer-first
+ * check: if the request carries a valid Keycloak/OIDC bearer token for a route whose
+ * tenant has remote-agent OIDC auth enabled, authenticate as that user directly:
+ * otherwise fall through to the wrapped middleware unchanged, so every existing
+ * (native session / cookie) caller keeps working exactly as before. Additive only -
+ * never used to replace the wrapped middleware's own failure handling.
+ */
+export function createOidcOrFallbackAuth(
+  deps: RemoteAgentOidcResolveDeps,
+  fallback: RequestHandler,
+): RequestHandler {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const user = await resolveOidcBearerUser(req, deps);
+    if (user == null) {
+      fallback(req, res, next);
+      return;
+    }
+
+    req.user = user;
+    continueWithAuthenticatedTenantContext(req, res, next);
+  };
+}
+
+export interface ApiKeyResolveDeps {
+  validateAgentApiKey: (
+    apiKey: string,
+  ) => Promise<{ userId: Types.ObjectId; keyId: Types.ObjectId } | null>;
+  findUser: UserMethods['findUser'];
+  getAppConfig: RemoteAgentAuthDeps['getAppConfig'];
+}
+
+interface ResolvedApiKeyAuth {
+  user: IUser & { id: string };
+  apiKeyId: Types.ObjectId;
+}
+
+/**
+ * Resolves the caller from a personal Agent API key (the same durable, per-user
+ * credential minted via POST /api/api-keys - see apiKeys/service.ts), without ever
+ * writing to `res` or calling `next`. Mirrors {@link resolveOidcBearerUser}'s shape
+ * for the same reason: some routes (e.g. /api/memories) must keep their existing
+ * native-session auth working unchanged for LibreChat's own UI, while additionally
+ * accepting this key for callers - like a Langflow component reading/writing this
+ * user's memories - that only have that durable key, not a live browser session.
+ */
+async function resolveApiKeyUser(
+  req: Request,
+  { validateAgentApiKey, findUser }: Pick<ApiKeyResolveDeps, 'validateAgentApiKey' | 'findUser'>,
+): Promise<ResolvedApiKeyAuth | null> {
+  try {
+    const token = extractBearer(req.headers.authorization);
+    if (token == null) return null;
+
+    const keyValidation = await validateAgentApiKey(token);
+    if (!keyValidation) return null;
+
+    const user = await findUser({ _id: keyValidation.userId });
+    if (!user) return null;
+
+    (user as IUser & { id?: string }).id = (user._id as Types.ObjectId).toString();
+    return { user: user as IUser & { id: string }, apiKeyId: keyValidation.keyId };
+  } catch (err) {
+    logger.warn('[remoteAgentAuth] API key resolution failed', err);
+    return null;
+  }
+}
+
+/**
+ * Wraps an existing auth middleware (e.g. `requireJwtAuth`) with an API-key-first
+ * check: if the request carries a valid Agent API key, authenticate as that key's
+ * owner directly (subject to the same tenant-context and `apiKey.enabled` policy
+ * checks the Remote Agents API's own API-key path already enforces); otherwise fall
+ * through to the wrapped middleware unchanged, so every existing (native session /
+ * cookie) caller keeps working exactly as before.
+ */
+export function createApiKeyOrFallbackAuth(
+  deps: ApiKeyResolveDeps,
+  fallback: RequestHandler,
+): RequestHandler {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const resolved = await resolveApiKeyUser(req, deps);
+    if (resolved == null) {
+      fallback(req, res, next);
+      return;
+    }
+
+    const userTenantId = (resolved.user as { tenantId?: string }).tenantId;
+    if (rejectTenantContextConflict(getTenantId(), userTenantId, res)) {
+      return;
+    }
+
+    const config = await deps.getAppConfig(getConfigOptions(req));
+    if (!isApiKeyEnabled(config)) {
+      logger.warn('[remoteAgentAuth] API key rejected by resolved tenant auth policy');
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    req.user = resolved.user;
+    (req as Request & { apiKeyId?: Types.ObjectId }).apiKeyId = resolved.apiKeyId;
+    continueWithAuthenticatedTenantContext(req, res, next);
+  };
 }

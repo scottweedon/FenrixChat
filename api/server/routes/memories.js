@@ -1,5 +1,5 @@
 const express = require('express');
-const { Tokenizer, generateCheckAccess } = require('@librechat/api');
+const { Tokenizer, generateCheckAccess, createApiKeyOrFallbackAuth } = require('@librechat/api');
 const {
   PermissionTypes,
   PermissionBits,
@@ -16,7 +16,10 @@ const {
   deleteMemory,
   setMemory,
   getAgents,
+  validateAgentApiKey,
+  findUser,
 } = require('~/models');
+const { getAppConfig } = require('~/server/services/Config');
 const { requireJwtAuth, configMiddleware } = require('~/server/middleware');
 
 const router = express.Router();
@@ -49,7 +52,18 @@ const checkMemoryOptOut = generateCheckAccess({
   getRoleByName,
 });
 
-router.use(requireJwtAuth);
+// Accepts either a native LibreChat session (the app's own UI) or a personal Agent
+// API key (e.g. FENRIX_AGENT_API_KEY, minted via POST /api/api-keys) - lets the
+// LibreChatMemoryComponent in Langflow read/write this user's own memories using
+// the same already-provisioned credential the "Fenrix Agents" model uses, instead
+// of requiring a manually pasted token. See remoteAgentAuth.ts's
+// createApiKeyOrFallbackAuth for the tenant-context/policy handling this wraps.
+const requireJwtOrApiKeyAuth = createApiKeyOrFallbackAuth(
+  { validateAgentApiKey, findUser, getAppConfig },
+  requireJwtAuth,
+);
+
+router.use(requireJwtOrApiKeyAuth);
 
 /** Normalizes the optional agent partition param; undefined = shared personal pool */
 const getAgentIdParam = (value) =>

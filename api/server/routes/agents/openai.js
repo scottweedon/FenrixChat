@@ -86,6 +86,6 @@ router.get('/models', ListModelsController);
  * @desc Get details for a specific agent/model
  * @access Private (API key auth required)
  */
-router.get('/models/:model', GetModelController);
+router.get('/models/:model', checkAgentPermission, GetModelController);
 
 module.exports = router;

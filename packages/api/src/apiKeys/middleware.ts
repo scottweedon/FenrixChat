@@ -1,9 +1,9 @@
 import { logger } from '@librechat/data-schemas';
-import { ResourceType, PermissionBits, hasPermissions } from 'librechat-data-provider';
+import { ResourceType } from 'librechat-data-provider';
 import type { Request, Response, NextFunction } from 'express';
 import type { IUser } from '@librechat/data-schemas';
 import type { Types } from 'mongoose';
-import { getRemoteAgentPermissions } from './service';
+import { checkRemoteAgentAccess } from './service';
 
 export interface ApiKeyAuthDependencies {
   validateAgentApiKey: (apiKey: string) => Promise<{
@@ -17,6 +17,7 @@ export interface RemoteAgentAccessDependencies {
   getAgent: (query: {
     id: string;
   }) => Promise<{ _id: Types.ObjectId; [key: string]: unknown } | null>;
+  getAgentsByName: (name: string) => Promise<Array<{ _id: Types.ObjectId; [key: string]: unknown }>>;
   getEffectivePermissions: (params: {
     userId: string;
     role?: string;
@@ -127,7 +128,25 @@ export function createCheckRemoteAgentAccess(deps: RemoteAgentAccessDependencies
     }
 
     try {
-      const agent = await deps.getAgent({ id: agentId });
+      const userId = req.user?.id || '';
+      const { hasAccess, permissions, agent, ambiguous } = await checkRemoteAgentAccess({
+        userId,
+        role: req.user?.role,
+        agentId,
+        getAgent: deps.getAgent,
+        getAgentsByName: deps.getAgentsByName,
+        getEffectivePermissions: deps.getEffectivePermissions,
+      });
+
+      if (ambiguous) {
+        return res.status(409).json({
+          error: {
+            message: `Multiple agents named "${agentId}" are accessible to you. Use the specific agent's ID instead.`,
+            type: 'invalid_request_error',
+            code: 'ambiguous_model_name',
+          },
+        });
+      }
 
       if (!agent) {
         return res.status(404).json({
@@ -139,11 +158,7 @@ export function createCheckRemoteAgentAccess(deps: RemoteAgentAccessDependencies
         });
       }
 
-      const userId = req.user?.id || '';
-
-      const permissions = await getRemoteAgentPermissions(deps, userId, req.user?.role, agent._id);
-
-      if (!hasPermissions(permissions, PermissionBits.VIEW)) {
+      if (!hasAccess) {
         return res.status(403).json({
           error: {
             message: `No remote access to agent: ${agentId}`,
@@ -151,6 +166,20 @@ export function createCheckRemoteAgentAccess(deps: RemoteAgentAccessDependencies
             code: 'access_denied',
           },
         });
+      }
+
+      // The resolved agent's real ID may differ from what the caller sent (e.g. a
+      // friendly name resolved via the getAgentsByName fallback above) - rewrite it
+      // so every downstream reader (envelope construction, response `model` field,
+      // etc.) sees the canonical ID exactly as if it had been sent directly.
+      const resolvedId = (agent as { id?: string }).id;
+      if (resolvedId && resolvedId !== agentId) {
+        if (req.body && typeof req.body === 'object' && 'model' in req.body) {
+          req.body.model = resolvedId;
+        }
+        if (req.params && 'model' in req.params) {
+          req.params.model = resolvedId;
+        }
       }
 
       req.agent = agent;

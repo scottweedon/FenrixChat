@@ -983,51 +983,17 @@ const ListModelsController = async (req, res) => {
 };
 
 /**
- * Get a specific model/agent (with remote access permission check)
+ * Get a specific model/agent (with remote access permission check).
+ * Resolution and the VIEW-permission check already ran in the `checkAgentPermission`
+ * route middleware (id lookup, with a name fallback for callers - e.g. Langflow's
+ * live model discovery - that only have a display name to send back), which stashed
+ * the result on `req.agent`.
  *
  * GET /v1/models/:model
  */
 const GetModelController = async (req, res) => {
   try {
-    const { model } = req.params;
-    const userId = req.user?.id;
-    const userRole = req.user?.role;
-
-    if (!userId) {
-      return sendErrorResponse(res, 401, 'Authentication required', 'auth_error');
-    }
-
-    const agent = await db.getAgent({ id: model });
-
-    if (!agent) {
-      return sendErrorResponse(
-        res,
-        404,
-        `Model not found: ${model}`,
-        'invalid_request_error',
-        'model_not_found',
-      );
-    }
-
-    // Check if user has remote access to this agent
-    const accessibleAgentIds = await findAccessibleResources({
-      userId,
-      role: userRole,
-      resourceType: ResourceType.REMOTE_AGENT,
-      requiredPermissions: PermissionBits.VIEW,
-    });
-
-    const hasAccess = accessibleAgentIds.some((id) => id.toString() === agent._id.toString());
-
-    if (!hasAccess) {
-      return sendErrorResponse(
-        res,
-        403,
-        `No remote access to model: ${model}`,
-        'permission_error',
-        'access_denied',
-      );
-    }
+    const agent = req.agent;
 
     res.json({
       id: agent.id,

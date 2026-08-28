@@ -54,7 +54,12 @@ import jwksRsa from 'jwks-rsa';
 import { SystemRoles } from 'librechat-data-provider';
 import { fetch as undiciFetch } from 'undici';
 import { getTenantId, logger, tenantStorage } from '@librechat/data-schemas';
-import { clearRemoteAgentAuthCache, createRemoteAgentAuth } from './remoteAgentAuth';
+import {
+  clearRemoteAgentAuthCache,
+  createApiKeyOrFallbackAuth,
+  createOidcOrFallbackAuth,
+  createRemoteAgentAuth,
+} from './remoteAgentAuth';
 import { findOpenIDUser, getOpenIdEmail } from '../auth/openid';
 import { isEnabled, math } from '~/utils';
 import { getEnvProxyDispatcher, getHttpsProxyAgent } from '~/utils/proxy';
@@ -1867,5 +1872,177 @@ describe('createRemoteAgentAuth', () => {
 
       expect(mockNext).toHaveBeenCalled();
     });
+  });
+});
+
+describe('createOidcOrFallbackAuth', () => {
+  let mockNext: jest.Mock;
+  let mockFallback: jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    deleteEnvKeys();
+    clearRemoteAgentAuthCache();
+    mockFetch.mockReset();
+    mockMath.mockReturnValue(60000);
+    mockIsEnabled.mockImplementation((value?: string) => value === 'true');
+    mockGetEnvProxyDispatcher.mockReturnValue(undefined);
+    mockGetHttpsProxyAgent.mockReturnValue(undefined);
+    mockFindOpenIDUser.mockImplementation(realFindOpenIDUser);
+    mockNext = jest.fn();
+    mockFallback = jest.fn((_req: unknown, _res: unknown, next: () => void) => next());
+  });
+
+  afterEach(() => {
+    deleteEnvKeys();
+    clearRemoteAgentAuthCache();
+  });
+
+  afterAll(() => {
+    restoreOriginalEnv();
+  });
+
+  it('resolves the user and calls next() without invoking the fallback when the OIDC bearer is valid', async () => {
+    setupOidcMocks({ sub: 'sub123', email: 'agent@test.com', exp: 9999999999 });
+    const deps = makeDeps();
+    const req = makeReq({ authorization: `Bearer ${FAKE_TOKEN}` });
+    const { res } = makeRes();
+
+    await createOidcOrFallbackAuth(asDeps(deps), mockFallback)(req as Request, res, mockNext);
+
+    expect(req.user).toMatchObject({ id: 'uid123' });
+    expect(mockNext).toHaveBeenCalled();
+    expect(mockFallback).not.toHaveBeenCalled();
+  });
+
+  it('falls through to the fallback middleware when there is no bearer token', async () => {
+    const deps = makeDeps();
+    const req = makeReq();
+    const { res } = makeRes();
+
+    await createOidcOrFallbackAuth(asDeps(deps), mockFallback)(req as Request, res, mockNext);
+
+    expect(mockFallback).toHaveBeenCalledWith(req, res, mockNext);
+  });
+
+  it('falls through to the fallback middleware when OIDC auth is disabled for the tenant', async () => {
+    const deps = makeDeps(makeConfig({ enabled: false }));
+    const req = makeReq({ authorization: `Bearer ${FAKE_TOKEN}` });
+    const { res } = makeRes();
+
+    await createOidcOrFallbackAuth(asDeps(deps), mockFallback)(req as Request, res, mockNext);
+
+    expect(mockFallback).toHaveBeenCalledWith(req, res, mockNext);
+  });
+
+  it('falls through to the fallback middleware when JWT verification fails, never sending a response itself', async () => {
+    (jwt.decode as jest.Mock).mockReturnValue({ header: { kid: 'test-kid' }, payload: {} });
+    mockGetSigningKey.mockResolvedValue({ getPublicKey: () => 'public-key' });
+    (jwt.verify as jest.Mock).mockImplementation(
+      (_t: string, _k: string, _o: VerifyOptions, cb: JwtVerifyCallback) =>
+        cb(new Error('invalid signature')),
+    );
+    const deps = makeDeps();
+    const req = makeReq({ authorization: `Bearer ${FAKE_TOKEN}` });
+    const { res, status } = makeRes();
+
+    await createOidcOrFallbackAuth(asDeps(deps), mockFallback)(req as Request, res, mockNext);
+
+    expect(mockFallback).toHaveBeenCalledWith(req, res, mockNext);
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it('falls through to the fallback middleware when no LibreChat user matches the OIDC subject', async () => {
+    setupOidcMocks({ sub: 'sub-unknown', email: 'nobody@test.com', exp: 9999999999 });
+    const deps = makeDeps();
+    deps.findUser = makeFindUser(); // no users
+    const req = makeReq({ authorization: `Bearer ${FAKE_TOKEN}` });
+    const { res } = makeRes();
+
+    await createOidcOrFallbackAuth(asDeps(deps), mockFallback)(req as Request, res, mockNext);
+
+    expect(mockFallback).toHaveBeenCalledWith(req, res, mockNext);
+    expect(req.user).toBeUndefined();
+  });
+});
+
+describe('createApiKeyOrFallbackAuth', () => {
+  let mockNext: jest.Mock;
+  let mockFallback: jest.Mock;
+
+  function makeApiKeyDeps(overrides: { validateAgentApiKey?: jest.Mock; appConfig?: AppConfig } = {}) {
+    return {
+      validateAgentApiKey:
+        overrides.validateAgentApiKey ??
+        jest.fn().mockResolvedValue({ userId: 'uid123', keyId: 'key123' }),
+      findUser: makeFindUser(makeUser()),
+      getAppConfig: jest.fn().mockResolvedValue(overrides.appConfig ?? makeConfig()),
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockNext = jest.fn();
+    mockFallback = jest.fn((_req: unknown, _res: unknown, next: () => void) => next());
+  });
+
+  it('resolves the user and calls next() without invoking the fallback when the API key is valid', async () => {
+    const deps = makeApiKeyDeps();
+    const req = makeReq({ authorization: 'Bearer sk-valid' });
+    const { res } = makeRes();
+
+    await createApiKeyOrFallbackAuth(deps, mockFallback)(req as Request, res, mockNext);
+
+    expect(deps.validateAgentApiKey).toHaveBeenCalledWith('sk-valid');
+    expect(req.user).toMatchObject({ id: 'uid123' });
+    expect((req as Request & { apiKeyId?: string }).apiKeyId).toBe('key123');
+    expect(mockNext).toHaveBeenCalled();
+    expect(mockFallback).not.toHaveBeenCalled();
+  });
+
+  it('falls through to the fallback middleware when there is no bearer token', async () => {
+    const deps = makeApiKeyDeps();
+    const req = makeReq();
+    const { res } = makeRes();
+
+    await createApiKeyOrFallbackAuth(deps, mockFallback)(req as Request, res, mockNext);
+
+    expect(deps.validateAgentApiKey).not.toHaveBeenCalled();
+    expect(mockFallback).toHaveBeenCalledWith(req, res, mockNext);
+  });
+
+  it('falls through to the fallback middleware, never sending a response itself, when the key does not validate', async () => {
+    const deps = makeApiKeyDeps({ validateAgentApiKey: jest.fn().mockResolvedValue(null) });
+    const req = makeReq({ authorization: 'Bearer sk-invalid' });
+    const { res, status } = makeRes();
+
+    await createApiKeyOrFallbackAuth(deps, mockFallback)(req as Request, res, mockNext);
+
+    expect(mockFallback).toHaveBeenCalledWith(req, res, mockNext);
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it('falls through to the fallback middleware when no user matches the validated key', async () => {
+    const deps = makeApiKeyDeps();
+    deps.findUser = makeFindUser(); // no users
+    const req = makeReq({ authorization: 'Bearer sk-valid' });
+    const { res } = makeRes();
+
+    await createApiKeyOrFallbackAuth(deps, mockFallback)(req as Request, res, mockNext);
+
+    expect(mockFallback).toHaveBeenCalledWith(req, res, mockNext);
+    expect(req.user).toBeUndefined();
+  });
+
+  it('rejects with 401 (no fallback) when API-key auth is disabled for the resolved tenant', async () => {
+    const deps = makeApiKeyDeps({ appConfig: makeConfig(undefined, { enabled: false }) });
+    const req = makeReq({ authorization: 'Bearer sk-valid' });
+    const { res, status, json } = makeRes();
+
+    await createApiKeyOrFallbackAuth(deps, mockFallback)(req as Request, res, mockNext);
+
+    expect(mockFallback).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(401);
+    expect(json).toHaveBeenCalledWith({ error: 'Unauthorized' });
   });
 });

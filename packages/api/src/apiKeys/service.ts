@@ -21,6 +21,8 @@ export interface RemoteAgentAccessResult {
   hasAccess: boolean;
   permissions: number;
   agent: { _id: Types.ObjectId; [key: string]: unknown } | null;
+  /** True when `agentId` matched more than one name-accessible agent and was rejected rather than guessed. */
+  ambiguous?: boolean;
 }
 
 export class AgentApiKeyService {
@@ -129,6 +131,16 @@ export async function checkRemoteAgentAccess(params: {
   getAgent: (query: {
     id: string;
   }) => Promise<{ _id: Types.ObjectId; [key: string]: unknown } | null>;
+  /**
+   * Fallback used only when `agentId` doesn't resolve as a real agent ID - lets a
+   * friendly agent name (LibreChat's own display name, also returned as the `name`
+   * field from GET /v1/models) work as the API's `model` value too. Needed because
+   * OpenAI-compatible model-listing clients that lack a separate display-label field
+   * (e.g. Langflow's live model discovery) have no choice but to echo back whatever
+   * string they showed the user - so if that string is the friendly name, it must
+   * resolve here rather than only the opaque `agent_...` ID.
+   */
+  getAgentsByName: (name: string) => Promise<Array<{ _id: Types.ObjectId; [key: string]: unknown }>>;
   getEffectivePermissions: (params: {
     userId: string;
     role?: string;
@@ -136,12 +148,34 @@ export async function checkRemoteAgentAccess(params: {
     resourceId: string | Types.ObjectId;
   }) => Promise<number>;
 }): Promise<RemoteAgentAccessResult> {
-  const { userId, role, agentId, getAgent, getEffectivePermissions } = params;
+  const { userId, role, agentId, getAgent, getAgentsByName, getEffectivePermissions } = params;
 
-  const agent = await getAgent({ id: agentId });
+  let agent = await getAgent({ id: agentId });
 
   if (!agent) {
-    return { hasAccess: false, permissions: 0, agent: null };
+    const candidates = await getAgentsByName(agentId);
+    const accessible: typeof candidates = [];
+    for (const candidate of candidates) {
+      const candidatePerms = await getRemoteAgentPermissions(
+        { getEffectivePermissions },
+        userId,
+        role,
+        candidate._id,
+      );
+      if (hasPermissions(candidatePerms, PermissionBits.VIEW)) {
+        accessible.push(candidate);
+      }
+    }
+
+    if (accessible.length > 1) {
+      // Never silently guess which agent was meant - ambiguous names must be
+      // disambiguated by the caller (e.g. by using the specific agent ID).
+      return { hasAccess: false, permissions: 0, agent: null, ambiguous: true };
+    }
+    if (accessible.length === 0) {
+      return { hasAccess: false, permissions: 0, agent: null };
+    }
+    agent = accessible[0];
   }
 
   const permissions = await getRemoteAgentPermissions(
