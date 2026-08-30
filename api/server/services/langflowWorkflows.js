@@ -70,6 +70,14 @@ async function reinitializeMcpServer(selfBaseUrl, librechatToken, serverName) {
   if (!response.ok) {
     throw new Error(`MCP server reinitialize failed: ${response.status} ${await response.text()}`);
   }
+  // A connection failure (e.g. a stale credential) still comes back as HTTP 200 with
+  // `success: false` - the route only 4xx/5xxs on things like an unknown server name or an
+  // unhandled exception. Treat `success: false` as a failure too, or a stale-key retry can
+  // never detect that the retry itself needs to happen.
+  const body = await response.json();
+  if (!body.success) {
+    throw new Error(`MCP server reinitialize did not succeed: ${body.failureReason || body.message || 'unknown reason'}`);
+  }
 }
 
 /**
@@ -112,6 +120,11 @@ async function cleanupLegacySelfServiceServers(selfBaseUrl, librechatToken) {
   }
 }
 
+async function mintAndStoreKey(langflowInternalUrl, externalToken, userId) {
+  const langflowApiKey = await mintLangflowApiKey(langflowInternalUrl, externalToken);
+  await updateUserPluginAuth(userId, AUTH_FIELD, PLUGIN_KEY, langflowApiKey);
+}
+
 /**
  * Best-effort, idempotent, never throws - the caller (the OAuth callback) must not let a
  * slow or unavailable Langflow container delay a user's login, so this is invoked
@@ -131,12 +144,6 @@ async function ensureLangflowWorkflowsMcpServer(user, externalToken) {
     }
     const userId = user._id.toString();
 
-    const hasKey = await getUserPluginAuthValue(userId, AUTH_FIELD, false, PLUGIN_KEY);
-    if (!hasKey) {
-      const langflowApiKey = await mintLangflowApiKey(langflowInternalUrl, externalToken);
-      await updateUserPluginAuth(userId, AUTH_FIELD, PLUGIN_KEY, langflowApiKey);
-    }
-
     // Not DOMAIN_SERVER - that's the public, Caddy-fronted, tenant-prefixed URL meant for
     // browsers. From inside this same container "localhost" is this container's own
     // loopback, not Caddy, so a self-call needs the app's own internal listening port
@@ -145,7 +152,26 @@ async function ensureLangflowWorkflowsMcpServer(user, externalToken) {
     const librechatToken = await generateToken(user);
 
     await cleanupLegacySelfServiceServers(selfBaseUrl, librechatToken);
-    await reinitializeMcpServer(selfBaseUrl, librechatToken, SERVER_NAME);
+
+    const hasKey = await getUserPluginAuthValue(userId, AUTH_FIELD, false, PLUGIN_KEY);
+    if (!hasKey) {
+      await mintAndStoreKey(langflowInternalUrl, externalToken, userId);
+    }
+
+    try {
+      await reinitializeMcpServer(selfBaseUrl, librechatToken, SERVER_NAME);
+    } catch (err) {
+      // A stored key can go stale independently of LibreChat (e.g. Langflow's own store
+      // was reset/rebuilt) - "a value exists" isn't proof it still works. Self-heal by
+      // minting a fresh key once and retrying, rather than leaving a dead connection until
+      // someone manually clears the stored credential.
+      logger.debug(
+        '[langflowWorkflows] Reinitialize failed, re-minting Langflow API key and retrying once',
+        err,
+      );
+      await mintAndStoreKey(langflowInternalUrl, externalToken, userId);
+      await reinitializeMcpServer(selfBaseUrl, librechatToken, SERVER_NAME);
+    }
   } catch (err) {
     logger.debug('[langflowWorkflows] Could not provision Fenrix Workflows MCP server', err);
   }

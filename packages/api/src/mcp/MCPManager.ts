@@ -1084,6 +1084,11 @@ Please follow these instructions when using tools from the respective MCP server
             CallToolResultSchema,
             {
               timeout: connection!.timeout,
+              // The SDK only attaches a _meta.progressToken to the outgoing request (and thus
+              // only resets the timeout on incoming progress notifications) when onprogress is
+              // set - resetTimeoutOnProgress alone is a no-op without it. A caller-supplied
+              // onprogress in `options` still wins via the spread below.
+              onprogress: () => {},
               resetTimeoutOnProgress: true,
               ...options,
             },

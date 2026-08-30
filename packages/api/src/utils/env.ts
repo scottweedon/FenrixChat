@@ -141,8 +141,18 @@ export function createSafeUser(
 /**
  * List of allowed request body fields that can be used in header placeholders.
  * These are common fields from the request body that are safe to expose in headers.
+ *
+ * `chatProjectId` is stamped onto `req.body` server-side from the already-loaded,
+ * user-scoped conversation record (see `attachConversationCreatedAt` in
+ * `api/server/controllers/agents/request.js`) - never client-supplied - so trusting it
+ * here carries the same guarantee as `conversationId` itself.
  */
-export const ALLOWED_BODY_FIELDS = ['conversationId', 'parentMessageId', 'messageId'] as const;
+export const ALLOWED_BODY_FIELDS = [
+  'conversationId',
+  'parentMessageId',
+  'messageId',
+  'chatProjectId',
+] as const;
 
 /**
  * Matches every placeholder this module knows how to resolve: the enumerated

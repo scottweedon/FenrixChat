@@ -10,6 +10,8 @@ export type RequestBody = {
   messageId?: string;
   fileTokenLimit?: number;
   conversationId?: string;
+  /** Stamped server-side from the resolved conversation record - never client-supplied. */
+  chatProjectId?: string | null;
   parentMessageId?: string;
   endpoint?: string;
   endpointType?: string;

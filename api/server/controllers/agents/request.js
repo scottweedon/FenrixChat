@@ -80,6 +80,10 @@ async function attachConversationCreatedAt(req, conversationId, conversationAnch
   req.conversationCreatedAt = resolved.createdAt;
   if (resolved.conversation !== undefined) {
     req.resolvedConversation = resolved.conversation ?? null;
+    // Trusted, user-scoped lookup (getConvo is called with this request's own userId) -
+    // safe to expose via the {{LIBRECHAT_BODY_CHATPROJECTID}} placeholder the same way
+    // conversationId already is, since a client cannot influence this value.
+    req.body.chatProjectId = resolved.conversation?.chatProjectId ?? null;
   }
 }
 
