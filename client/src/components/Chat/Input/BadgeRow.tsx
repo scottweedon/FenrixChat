@@ -24,6 +24,7 @@ import WebSearch from './WebSearch';
 import Memory from './Memory';
 import Skills from './Skills';
 import store from '~/store';
+import { FenrixSearchTool, FenrixWorkflowsTool } from './FenrixMcpTools';
 
 interface BadgeRowProps {
   showEphemeralBadges?: boolean;
@@ -378,6 +379,8 @@ function BadgeRow({
             <Skills />
             <Memory />
             <Artifacts />
+            <FenrixSearchTool />
+            <FenrixWorkflowsTool />
             <MCPSelect />
           </>
         )}

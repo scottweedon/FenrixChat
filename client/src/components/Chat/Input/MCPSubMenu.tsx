@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import * as Ariakit from '@ariakit/react';
 import { ChevronRight } from 'lucide-react';
 import { MCPIcon, PinIcon } from '@librechat/client';
 import MCPServerMenuItem from '~/components/MCP/MCPServerMenuItem';
 import MCPConfigDialog from '~/components/MCP/MCPConfigDialog';
+import { PROMOTED_MCP_SERVER_NAMES } from './FenrixMcpTools';
 import { useBadgeRowContext } from '~/Providers';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
@@ -24,6 +25,16 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
       placement: 'right',
     });
 
+    /** Servers with their own dedicated composer badge (see FenrixMcpTools.tsx)
+     * are excluded here so each tool has exactly one toggle, not two. */
+    const visibleServers = useMemo(
+      () =>
+        mcpServerManager?.selectableServers?.filter(
+          (s) => !PROMOTED_MCP_SERVER_NAMES.has(s.serverName),
+        ) ?? [],
+      [mcpServerManager?.selectableServers],
+    );
+
     if (!mcpServerManager) {
       return null;
     }
@@ -35,13 +46,12 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
       isInitializing,
       placeholderText,
       connectionStatus,
-      selectableServers,
       getConfigDialogProps,
       toggleServerSelection,
       getServerStatusIconProps,
     } = mcpServerManager;
 
-    if (!selectableServers || selectableServers.length === 0) {
+    if (visibleServers.length === 0) {
       return null;
     }
 
@@ -96,7 +106,7 @@ const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
             )}
           >
             <div className="flex max-h-[320px] flex-col gap-1 overflow-y-auto">
-              {selectableServers.map((server) => (
+              {visibleServers.map((server) => (
                 <MCPServerMenuItem
                   key={server.serverName}
                   server={server}

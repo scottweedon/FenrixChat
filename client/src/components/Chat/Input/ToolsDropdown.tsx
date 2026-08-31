@@ -1,7 +1,15 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import * as Ariakit from '@ariakit/react';
 import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon } from '@librechat/client';
-import { Brain, Globe, ScrollText, Settings, Settings2, TerminalSquareIcon } from 'lucide-react';
+import {
+  Brain,
+  Globe,
+  Workflow,
+  ScrollText,
+  Settings,
+  Settings2,
+  TerminalSquareIcon,
+} from 'lucide-react';
 import {
   AuthType,
   Permissions,
@@ -19,6 +27,10 @@ import {
 } from '~/hooks';
 import ArtifactsSubMenu from '~/components/Chat/Input/ArtifactsSubMenu';
 import MCPSubMenu from '~/components/Chat/Input/MCPSubMenu';
+import {
+  PROMOTED_MCP_SERVER_NAMES,
+  usePromotedMcpTool,
+} from '~/components/Chat/Input/FenrixMcpTools';
 import { useGetStartupConfig } from '~/data-provider';
 import { useBadgeRowContext } from '~/Providers';
 import { cn } from '~/utils';
@@ -69,6 +81,9 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   const canUseMemory = useHasMemoryAccess();
   const showMemory = canUseMemory && memoryEnabled && user?.personalization?.memories !== false;
+
+  const fenrixSearch = usePromotedMcpTool('fenrix-search');
+  const fenrixWorkflows = usePromotedMcpTool('fenrix-workflows');
 
   const [isPopoverActive, setIsPopoverActive] = useState(false);
   const isDisabled = disabled ?? false;
@@ -244,6 +259,70 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
+  if (fenrixSearch.server) {
+    dropdownItems.push({
+      onClick: fenrixSearch.toggle,
+      hideOnClick: false,
+      render: (props) => (
+        <div {...props}>
+          <div className="flex items-center gap-2">
+            <Globe className="icon-md" aria-hidden="true" />
+            <span>{fenrixSearch.label}</span>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              fenrixSearch.setIsPinned(!fenrixSearch.isPinned);
+            }}
+            className={cn(
+              'rounded p-1 transition-all duration-200',
+              'hover:bg-surface-secondary hover:shadow-sm',
+              !fenrixSearch.isPinned && 'text-text-secondary hover:text-text-primary',
+            )}
+            aria-label={fenrixSearch.isPinned ? 'Unpin' : 'Pin'}
+          >
+            <div className="h-4 w-4">
+              <PinIcon unpin={fenrixSearch.isPinned} />
+            </div>
+          </button>
+        </div>
+      ),
+    });
+  }
+
+  if (fenrixWorkflows.server) {
+    dropdownItems.push({
+      onClick: fenrixWorkflows.toggle,
+      hideOnClick: false,
+      render: (props) => (
+        <div {...props}>
+          <div className="flex items-center gap-2">
+            <Workflow className="icon-md" aria-hidden="true" />
+            <span>{fenrixWorkflows.label}</span>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              fenrixWorkflows.setIsPinned(!fenrixWorkflows.isPinned);
+            }}
+            className={cn(
+              'rounded p-1 transition-all duration-200',
+              'hover:bg-surface-secondary hover:shadow-sm',
+              !fenrixWorkflows.isPinned && 'text-text-secondary hover:text-text-primary',
+            )}
+            aria-label={fenrixWorkflows.isPinned ? 'Unpin' : 'Pin'}
+          >
+            <div className="h-4 w-4">
+              <PinIcon unpin={fenrixWorkflows.isPinned} />
+            </div>
+          </button>
+        </div>
+      ),
+    });
+  }
+
   if (canUseSkills && skillsEnabled) {
     dropdownItems.push({
       onClick: handleSkillsToggle,
@@ -359,8 +438,14 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
-  const { availableMCPServers } = mcpServerManager ?? {};
-  if (canUseMcp && availableMCPServers && availableMCPServers.length > 0) {
+  const { selectableServers: mcpSelectableServers } = mcpServerManager ?? {};
+  /** Servers with their own dedicated composer badge (see FenrixMcpTools.tsx) are
+   * excluded here so the "MCP Servers" entry doesn't appear as an empty row once
+   * nothing is left for it to list. */
+  const hasVisibleMcpServers = mcpSelectableServers?.some(
+    (s) => !PROMOTED_MCP_SERVER_NAMES.has(s.serverName),
+  );
+  if (canUseMcp && hasVisibleMcpServers) {
     dropdownItems.push({
       hideOnClick: false,
       render: (props) => <MCPSubMenu {...props} placeholder={mcpPlaceholder} />,

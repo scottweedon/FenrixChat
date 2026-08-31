@@ -8,4 +8,5 @@ export const badgeAccents = {
   cyan: 'border-cyan-600/40 bg-cyan-500/10 hover:bg-cyan-700/10',
   green: 'border-green-600/40 bg-green-500/10 hover:bg-green-700/10',
   purple: 'border-purple-600/40 bg-purple-500/10 hover:bg-purple-700/10',
+  orange: 'border-orange-600/40 bg-orange-500/10 hover:bg-orange-700/10',
 } as const;
