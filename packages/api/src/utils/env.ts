@@ -155,6 +155,20 @@ export const ALLOWED_BODY_FIELDS = [
 ] as const;
 
 /**
+ * Subset of `ALLOWED_BODY_FIELDS` that are legitimately absent/empty on many
+ * requests (e.g. `chatProjectId` for any conversation outside a Project - the
+ * common case) and so must NOT block an MCP server's connection-readiness gate
+ * (`getMissingRuntimeBodyPlaceholderFields`) the way a genuinely-required field
+ * like `conversationId` should. Without this, a server with an optional field in
+ * its header placeholders would defer its connection forever for any request
+ * where that field happens to be empty - which for `chatProjectId` is most
+ * requests, permanently breaking tool availability outside of Projects.
+ */
+export const OPTIONAL_BODY_FIELDS: ReadonlyArray<(typeof ALLOWED_BODY_FIELDS)[number]> = [
+  'chatProjectId',
+];
+
+/**
  * Matches every placeholder this module knows how to resolve: the enumerated
  * `{{LIBRECHAT_USER_*}}`, `{{LIBRECHAT_BODY_*}}`, and `{{LIBRECHAT_OPENID_*}}`
  * names. Deliberately excludes unknown names (a typo'd placeholder staying

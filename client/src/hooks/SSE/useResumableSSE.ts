@@ -1581,6 +1581,13 @@ export default function useResumableSSE(
             removeActiveJob(currentStreamId);
             clearAttachedGenerationCreatedAt();
             (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
+            // Mirrors useSSE.ts: a completed turn may have written sandbox files, so mark
+            // the file-tree panel's query stale rather than forcing a fetch for a panel
+            // nobody has open. Only on the success path (finalHandled) - an aborted/errored
+            // turn's tool calls may not have actually run.
+            if (finalHandled && finalConvoId) {
+              queryClient.invalidateQueries([QueryKeys.sandboxFilesTree, finalConvoId]);
+            }
             sse.close();
             setStreamId(null);
             optimisticStreamIdsRef.current.delete(currentStreamId);

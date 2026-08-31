@@ -880,6 +880,20 @@ export function getConversationById(id: string): Promise<s.TConversation> {
   return request.get(endpoints.conversationById(id));
 }
 
+export type TSandboxFile = { path: string; size: number };
+export type TSandboxFilesTree = { files: TSandboxFile[]; truncated?: boolean };
+
+export function getSandboxFilesTree(conversationId: string): Promise<TSandboxFilesTree> {
+  return request.get(endpoints.sandboxFilesTree(conversationId));
+}
+
+export function getSandboxFilesPreviewUrl(
+  conversationId: string,
+  path: string,
+): Promise<{ url: string }> {
+  return request.get(endpoints.sandboxFilesPreviewUrl(conversationId, path));
+}
+
 export function updateConversation(
   payload: t.TUpdateConversationRequest,
 ): Promise<t.TUpdateConversationResponse> {

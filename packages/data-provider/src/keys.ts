@@ -87,6 +87,8 @@ export enum QueryKeys {
   skillStates = 'skillStates',
   /* General user favorites */
   favorites = 'favorites',
+  /* Agent sandbox file-tree panel */
+  sandboxFilesTree = 'sandboxFilesTree',
 }
 
 // Dynamic query keys that require parameters

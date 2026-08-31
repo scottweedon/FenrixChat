@@ -33,7 +33,18 @@ type ProjectHandlerDependencies = Pick<
   | 'updateChatProject'
   | 'deleteChatProject'
   | 'assignConversationToProject'
->;
+> & {
+  /**
+   * Optional side-effect run after a successful assignConversationToProject DB update -
+   * moves the conversation's sandbox files to match its new Project scope (see
+   * api/server/services/sandboxFiles.js). Optional so this package has no hard dependency
+   * on the sandbox-files feature; omitting it just skips the file move.
+   */
+  moveSandboxFiles?: (
+    userId: string,
+    scope: { conversationId: string; previousProjectId: string | null; projectId: string | null },
+  ) => Promise<void>;
+};
 
 const getUserId = (req: ProjectRequest): string => req.user?.id ?? req.user?._id?.toString() ?? '';
 
@@ -135,14 +146,21 @@ export function createProjectHandlers(deps: ProjectHandlerDependencies): {
     }
 
     try {
-      const result = await deps.assignConversationToProject(
-        getUserId(req),
-        conversationId,
-        projectId,
-      );
+      const userId = getUserId(req);
+      const result = await deps.assignConversationToProject(userId, conversationId, projectId);
       if (!result) {
         return res.status(404).json({ error: CONVERSATION_NOT_FOUND });
       }
+      // Best-effort, non-blocking: the DB update above is already the source of truth for
+      // which Project this chat belongs to. Awaited (not fire-and-forget) so a slow move
+      // doesn't race a client re-reading the conversation's files immediately after this
+      // response, but its own errors are swallowed internally (see sandboxFiles.js) and
+      // never turn a successful reassignment into a failed response.
+      await deps.moveSandboxFiles?.(userId, {
+        conversationId,
+        previousProjectId: result.previousProjectId,
+        projectId: result.projectId,
+      });
       return res.status(200).json(result);
     } catch (error) {
       if (error instanceof Error && error.message === PROJECT_NOT_FOUND) {

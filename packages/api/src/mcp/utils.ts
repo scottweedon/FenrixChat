@@ -8,7 +8,7 @@ import {
 import type { AgentToolOptions } from 'librechat-data-provider';
 import type { ParsedServerConfig } from '~/mcp/types';
 import type { RequestBody } from '~/types';
-import { ALLOWED_BODY_FIELDS, isPluginSourced } from '~/utils/env';
+import { ALLOWED_BODY_FIELDS, OPTIONAL_BODY_FIELDS, isPluginSourced } from '~/utils/env';
 import { isEnabled } from '~/utils/common';
 
 export const mcpToolPattern: RegExp = new RegExp(`^.+${Constants.mcp_delimiter}.+$`);
@@ -362,6 +362,13 @@ export function getMissingRuntimeBodyPlaceholderFields(
   requestBody?: RequestBody,
 ): string[] {
   return getRuntimeBodyPlaceholderFields(config).filter((field) => {
+    // Optional fields (e.g. chatProjectId) are legitimately empty on most
+    // requests - processBodyPlaceholders already substitutes '' for them, so
+    // their absence must not block the connection-readiness gate the way a
+    // genuinely-required field's absence should.
+    if (OPTIONAL_BODY_FIELDS.includes(field as (typeof OPTIONAL_BODY_FIELDS)[number])) {
+      return false;
+    }
     const value = requestBody?.[field as keyof RequestBody];
     return value == null || (typeof value === 'string' && value.trim() === '');
   });

@@ -16,6 +16,7 @@ const messages = require('./messages');
 const memories = require('./memories');
 const presets = require('./presets');
 const projects = require('./projects');
+const sandboxFiles = require('./sandboxFiles');
 const prompts = require('./prompts');
 const skills = require('./skills');
 const balance = require('./balance');
@@ -67,6 +68,7 @@ module.exports = {
   models,
   prompts,
   projects,
+  sandboxFiles,
   skills,
   actions,
   presets,

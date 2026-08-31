@@ -1,6 +1,7 @@
 const express = require('express');
 const { createProjectHandlers } = require('@librechat/api');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
+const { moveSandboxFiles } = require('~/server/services/sandboxFiles');
 const db = require('~/models');
 
 const router = express.Router();
@@ -11,6 +12,7 @@ const handlers = createProjectHandlers({
   updateChatProject: db.updateChatProject,
   deleteChatProject: db.deleteChatProject,
   assignConversationToProject: db.assignConversationToProject,
+  moveSandboxFiles,
 });
 
 router.use(requireJwtAuth);

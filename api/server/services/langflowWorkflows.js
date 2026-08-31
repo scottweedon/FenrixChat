@@ -28,15 +28,22 @@
  * Langflow-native API key - which is exactly why this mint step exists rather than storing
  * the raw token as the MCP credential directly.
  */
+const { randomUUID } = require('node:crypto');
 const { logger } = require('@librechat/data-schemas');
 const { Constants } = require('librechat-data-provider');
 const { generateToken } = require('~/models');
 const { getUserPluginAuthValue, updateUserPluginAuth } = require('~/server/services/PluginService');
+const buildDocumentFlow = require('./defaultLangflowFlows/BuildDocument.json');
+const showDocumentFlow = require('./defaultLangflowFlows/ShowDocument.json');
 
 const SERVER_NAME = 'fenrix-workflows';
 const PLUGIN_KEY = `${Constants.mcp_prefix}${SERVER_NAME}`;
 const AUTH_FIELD = 'MCP_API_KEY';
 const LANGFLOW_API_KEY_NAME = 'Fenrix Chat access';
+// Every real user's own copy of Fenrix's built-in Build Document / Show Document flows -
+// seeded once per user (see ensureDefaultFlows below), never re-synced afterward so a
+// user's own edits (e.g. a hand-tuned system prompt) survive future logins untouched.
+const DEFAULT_FLOWS = [buildDocumentFlow, showDocumentFlow];
 // Leftover per-user servers from before this became an admin-defined server (self-service
 // registrations via POST /api/mcp/servers - see git history of this file). Cleaned up once,
 // opportunistically, on login so migrating users don't end up with both the old duplicate(s)
@@ -123,6 +130,64 @@ async function cleanupLegacySelfServiceServers(selfBaseUrl, librechatToken) {
 async function mintAndStoreKey(langflowInternalUrl, externalToken, userId) {
   const langflowApiKey = await mintLangflowApiKey(langflowInternalUrl, externalToken);
   await updateUserPluginAuth(userId, AUTH_FIELD, PLUGIN_KEY, langflowApiKey);
+  return langflowApiKey;
+}
+
+/**
+ * Seeds this user's own copy of each bundled default flow (Build Document, Show
+ * Document, ...) into their Langflow account, authenticated with their own personal API
+ * key - so Langflow's per-user MCP tool listing (`Flow.user_id == current_user.id`)
+ * actually surfaces them. Idempotent by design, not just in effect: checks for an
+ * existing flow by `action_name` first and only creates one if missing - a returning
+ * user's own edits (title, instructions, anything) are never touched by a later login.
+ *
+ * Each user's copy gets a freshly-generated id, never the template's own id - confirmed
+ * live that Flow ids are unique across the WHOLE Langflow instance, not per user, so
+ * reusing the same id for every user's copy only ever works for the first user to claim
+ * it (every other user's create/upsert 404s, since that id already belongs to someone
+ * else). `action_name` has no such collision: it's what Langflow's per-user MCP tool
+ * listing keys tool names on, and is exactly as unique as it needs to be - one match per
+ * calling user.
+ *
+ * Deliberately NOT a per-tenant provisioning step: at tenant-creation time no real user
+ * exists yet, and creating these under the Langflow superuser would leave them invisible
+ * to every real user's own per-user-scoped MCP tool list.
+ */
+async function ensureDefaultFlows(langflowInternalUrl, apiKey) {
+  let existingActionNames;
+  try {
+    // header_flows=true: a cheap listing (no flow `data`) - enough to check action_name.
+    const listResponse = await fetch(`${langflowInternalUrl}/api/v1/flows/?header_flows=true`, {
+      headers: { 'x-api-key': apiKey },
+    });
+    if (!listResponse.ok) {
+      throw new Error(`Failed to list existing flows: ${listResponse.status} ${await listResponse.text()}`);
+    }
+    const existingFlows = await listResponse.json();
+    existingActionNames = new Set(existingFlows.map((f) => f.action_name).filter(Boolean));
+  } catch (err) {
+    logger.debug('[langflowWorkflows] Could not list existing flows, skipping default-flow seeding', err);
+    return;
+  }
+
+  for (const flow of DEFAULT_FLOWS) {
+    if (existingActionNames.has(flow.action_name)) {
+      continue; // Already provisioned for this user - never overwrite.
+    }
+    try {
+      const newId = randomUUID();
+      const createResponse = await fetch(`${langflowInternalUrl}/api/v1/flows/${newId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+        body: JSON.stringify({ ...flow, id: newId }),
+      });
+      if (!createResponse.ok) {
+        throw new Error(`Flow creation failed: ${createResponse.status} ${await createResponse.text()}`);
+      }
+    } catch (err) {
+      logger.debug(`[langflowWorkflows] Could not create default flow "${flow.name}"`, err);
+    }
+  }
 }
 
 /**
@@ -153,10 +218,11 @@ async function ensureLangflowWorkflowsMcpServer(user, externalToken) {
 
     await cleanupLegacySelfServiceServers(selfBaseUrl, librechatToken);
 
-    const hasKey = await getUserPluginAuthValue(userId, AUTH_FIELD, false, PLUGIN_KEY);
-    if (!hasKey) {
-      await mintAndStoreKey(langflowInternalUrl, externalToken, userId);
+    let apiKey = await getUserPluginAuthValue(userId, AUTH_FIELD, false, PLUGIN_KEY);
+    if (!apiKey) {
+      apiKey = await mintAndStoreKey(langflowInternalUrl, externalToken, userId);
     }
+    await ensureDefaultFlows(langflowInternalUrl, apiKey);
 
     try {
       await reinitializeMcpServer(selfBaseUrl, librechatToken, SERVER_NAME);
@@ -169,7 +235,8 @@ async function ensureLangflowWorkflowsMcpServer(user, externalToken) {
         '[langflowWorkflows] Reinitialize failed, re-minting Langflow API key and retrying once',
         err,
       );
-      await mintAndStoreKey(langflowInternalUrl, externalToken, userId);
+      apiKey = await mintAndStoreKey(langflowInternalUrl, externalToken, userId);
+      await ensureDefaultFlows(langflowInternalUrl, apiKey);
       await reinitializeMcpServer(selfBaseUrl, librechatToken, SERVER_NAME);
     }
   } catch (err) {

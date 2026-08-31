@@ -6,6 +6,7 @@ import {
   Brain,
   Bookmark,
   Workflow,
+  FolderTree,
   NotebookPen,
   ScrollText,
   ArrowRightToLine,
@@ -34,6 +35,7 @@ import PanelSwitch from '~/components/SidePanel/Builder/PanelSwitch';
 import Parameters from '~/components/SidePanel/Parameters/Panel';
 import { MemoryPanel } from '~/components/SidePanel/Memories';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
+import SandboxFilesPanel from '~/components/SidePanel/SandboxFiles/Panel';
 import { PromptsAccordion } from '~/components/Prompts';
 import { SkillsAccordion } from '~/components/Skills';
 
@@ -179,6 +181,14 @@ export default function useSideNavLinks({
       icon: AttachmentIcon,
       id: 'files',
       Component: FilesPanel,
+    });
+
+    links.push({
+      title: 'com_sidepanel_sandbox_files',
+      label: '',
+      icon: FolderTree,
+      id: 'sandbox-files',
+      Component: SandboxFilesPanel,
     });
 
     if (

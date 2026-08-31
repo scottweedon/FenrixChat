@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { v4 } from 'uuid';
 import { SSE } from 'sse.js';
 import { useSetRecoilState } from 'recoil';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   request,
+  QueryKeys,
   UsageEvents,
   StepEvents,
   createPayload,
@@ -38,6 +40,7 @@ export default function useSSE(
   runIndex = 0,
 ) {
   const setActiveRunId = useSetRecoilState(store.activeRunFamily(runIndex));
+  const queryClient = useQueryClient();
 
   const { token, isAuthenticated } = useAuthContext();
   const [completed, setCompleted] = useState(new Set());
@@ -131,6 +134,14 @@ export default function useSSE(
           setShowStopButton(false);
         }
         (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
+        // The just-completed turn may have written sandbox files (build_document/
+        // write_file tool calls) - mark the file-tree panel's query stale so it
+        // refetches next time it's visible, rather than forcing a fetch for a panel
+        // nobody has open.
+        const finishedConvoId = submission.conversation?.conversationId;
+        if (finishedConvoId) {
+          queryClient.invalidateQueries([QueryKeys.sandboxFilesTree, finishedConvoId]);
+        }
         console.log('final', data);
         return;
       } else if (data.created != null) {

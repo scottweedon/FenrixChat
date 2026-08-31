@@ -133,6 +133,14 @@ export const forkConversation = () => `${conversationsRoot}/fork`;
 
 export const duplicateConversation = () => `${conversationsRoot}/duplicate`;
 
+export const sandboxFilesRoot = `${BASE_URL}/api/sandboxFiles`;
+
+export const sandboxFilesTree = (conversationId: string) =>
+  `${sandboxFilesRoot}/tree${buildQuery({ conversationId })}`;
+
+export const sandboxFilesPreviewUrl = (conversationId: string, path: string) =>
+  `${sandboxFilesRoot}/preview-url${buildQuery({ conversationId, path })}`;
+
 export const projectsRoot = `${BASE_URL}/api/projects`;
 
 export const projects = (params: q.ProjectListParams = {}) => {
