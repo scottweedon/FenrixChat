@@ -10,7 +10,13 @@ import type {
   FunctionToolCall,
 } from 'librechat-data-provider';
 import type { PartWithIndex } from './ParallelContent';
-import { cn, getToolDisplayLabel, getBatchActivityLabelPart, getActivityLabelText } from '~/utils';
+import {
+  cn,
+  getToolDisplayLabel,
+  getBatchActivityLabelPart,
+  getActivityLabelText,
+  hasPendingApprovalInPart,
+} from '~/utils';
 import { useLocalize, useExpandCollapse, scheduleMessageContentLayoutReconcile } from '~/hooks';
 import { useMCPIconMap, useMCPServerNames } from '~/hooks/MCP';
 import { isBashProgrammaticToolCall } from './routing';
@@ -19,31 +25,14 @@ import { StackedToolIcons } from './ToolOutput';
 import { AttachmentGroup } from './Parts';
 import store from '~/store';
 
+/** Steps kept visible in the live ticker while a run is still active - see
+ * `isWindowed` below. Mirrors SubagentCall.tsx's own TICKER_MAX_LINES. */
+const VISIBLE_WINDOW = 3;
+
 interface ToolMeta {
   name: string;
   iconName: string;
   hasOutput: boolean;
-}
-
-type ToolCallWithNestedContent = Agents.ToolCall & {
-  subagent_content?: TMessageContentParts[];
-};
-
-function hasPendingApprovalInPart(part: TMessageContentParts): boolean {
-  if (part.type !== ContentTypes.TOOL_CALL) {
-    return false;
-  }
-  const toolCall = part[ContentTypes.TOOL_CALL] as ToolCallWithNestedContent | undefined;
-  if (!toolCall) {
-    return false;
-  }
-  if (toolCall.approval != null && (toolCall.output?.length ?? 0) === 0) {
-    return true;
-  }
-  return (
-    Array.isArray(toolCall.subagent_content) &&
-    toolCall.subagent_content.some(hasPendingApprovalInPart)
-  );
 }
 
 function getToolMeta(part: TMessageContentParts): ToolMeta | null {
@@ -218,10 +207,11 @@ export default function ToolCallGroup({
   }, [toolNames, localize, mcpServerNames]);
 
   const autoExpand = useRecoilValue(store.autoExpandTools);
-  /** A labeled activity block is summarized by its header, so it collapses
-   *  even at a single tool call — agent runs are full of one-call batches,
-   *  and leaving those expanded defeats the grouping. */
-  const autoCollapse = !autoExpand && allCompleted && (count >= 2 || activityLabelText.length > 0);
+  /** Every group that exists at all (count >= 1) is worth collapsing once
+   *  settled — a solo tool call only ever forms a group here when it also
+   *  folded in reasoning (see groupToolCalls.ts), so leaving it expanded
+   *  would defeat the exact clutter this grouping exists to remove. */
+  const autoCollapse = !autoExpand && allCompleted;
   const initialState = initialExpansionState?.userOverride === true ? initialExpansionState : null;
   const [isExpanded, setIsExpanded] = useState(
     initialState?.isExpanded ?? (autoExpand || !autoCollapse),
@@ -311,6 +301,16 @@ export default function ToolCallGroup({
 
   /** Category-aware header verb: subagents and questions read as their own
    *  category (with tense), everything else is the generic "Used N tools". */
+  /** A group of exactly 1 (only ever formed when reasoning got folded in
+   *  alongside it - see groupToolCalls.ts) reads like the tool's own
+   *  standalone card ("Ran X"/"Running X"), not the generic "Used 1 tools" -
+   *  the count-based phrasing only makes sense once there's an actual count
+   *  worth stating. */
+  const soloToolLabel =
+    count === 1 && !allSubagents && !allAskQuestions
+      ? getToolDisplayLabel(toolNames[0] ?? '', localize, mcpServerNames)
+      : '';
+
   const resolveGroupLabel = (): string => {
     if (allSubagents) {
       return subagentsDone
@@ -321,6 +321,11 @@ export default function ToolCallGroup({
       return askQuestionsDone
         ? localize('com_ui_asked_n_questions', { 0: String(count) })
         : localize('com_ui_asking_n_questions', { 0: String(count) });
+    }
+    if (soloToolLabel) {
+      return allCompleted
+        ? localize('com_assistants_completed_function', { 0: soloToolLabel })
+        : localize('com_assistants_running_var', { 0: soloToolLabel });
     }
     return localize('com_ui_used_n_tools', { 0: String(count) });
   };
@@ -342,6 +347,20 @@ export default function ToolCallGroup({
       setIsExpanded(true);
     }
   }, [hasActiveToolCall, userOverride]);
+
+  /** While actively running, show only the most recent steps (like Claude.ai's
+   *  live activity ticker) instead of every step the run has produced so far -
+   *  a long-running batch of tool calls + reasoning would otherwise clutter
+   *  the chat with a wall of "Ran X"/"Thoughts" cards. Skipped once the user
+   *  has manually toggled this group (they asked to see everything) or once
+   *  a pending approval exists anywhere in the run (an actionable control must
+   *  never be hidden off-window). Settling the run naturally lifts the window
+   *  - `hasActiveToolCall` goes false and the effect above lets autoCollapse
+   *  fold the whole thing into the one-line summary; expanding it again after
+   *  that shows the full, unwindowed history. */
+  const isWindowed = hasActiveToolCall && !userOverride && !hasPendingApproval;
+  const visibleParts = isWindowed ? parts.slice(-VISIBLE_WINDOW) : parts;
+  const hiddenStepCount = isWindowed ? parts.length - visibleParts.length : 0;
 
   return (
     <div className="mb-2 mt-1" ref={rootRef}>
@@ -387,9 +406,10 @@ export default function ToolCallGroup({
           {groupLabel}
         </span>
         {/** Hide the tool-name summary for pure-category groups (subagents /
-         *   questions) — every entry deduplicates to the same token, which
-         *   adds noise without info. Mixed groups keep the summary. */}
-        {toolNameSummary && !allSubagents && !allAskQuestions && (
+         *   questions) and solo-tool groups — the header already names the
+         *   tool in both cases, so this would just repeat it. Mixed groups
+         *   keep the summary. */}
+        {toolNameSummary && !allSubagents && !allAskQuestions && !soloToolLabel && (
           <span className="min-w-0 max-w-[40%] truncate text-xs font-normal text-text-secondary">
             · {toolNameSummary}
           </span>
@@ -411,9 +431,29 @@ export default function ToolCallGroup({
         {shouldRenderBody && (
           <div className="overflow-hidden" ref={expandRef}>
             <div className="py-0.5 pl-4">
-              {parts.map(({ part, idx }) =>
-                renderPart(part, idx, isLast && idx === lastContentIdx, handleToolExpand),
+              {hiddenStepCount > 0 && (
+                <div className="pb-1 text-xs text-text-secondary" aria-hidden="true">
+                  {localize('com_ui_n_earlier_steps', { 0: String(hiddenStepCount) })}
+                </div>
               )}
+              {visibleParts.map(({ part, idx }, position) => {
+                /** Only the most-recent visible step reads as "active" - the
+                 *  rest of the window fades toward the collapsed group's own
+                 *  muted tone, so attention lands on what's happening now
+                 *  without losing the short trail of what just happened. */
+                const isFadedInWindow = isWindowed && position < visibleParts.length - 1;
+                return (
+                  <div
+                    key={idx}
+                    className={cn(
+                      'transition-opacity duration-300',
+                      isFadedInWindow && 'opacity-50',
+                    )}
+                  >
+                    {renderPart(part, idx, isLast && idx === lastContentIdx, handleToolExpand)}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

@@ -8,7 +8,12 @@ import type {
 } from 'librechat-data-provider';
 import type { ReactNode, ReactElement } from 'react';
 import type { ToolCallGroupExpansionState } from './ToolCallGroup';
-import { mapAttachments, filterAttachmentsForPart, groupSequentialToolCalls } from '~/utils';
+import {
+  mapAttachments,
+  filterAttachmentsForPart,
+  groupSequentialToolCalls,
+  hasPendingApprovalInPart,
+} from '~/utils';
 import { groupActivityPhases, lastVisibleContentIdx } from '~/utils/activityLabels';
 import { ParallelContentRenderer, type PartWithIndex } from './ParallelContent';
 import { MessageContext, SearchContext } from '~/Providers';
@@ -20,6 +25,7 @@ import ApprovalProvider from './ApprovalContext';
 import MemoryArtifacts from './MemoryArtifacts';
 import Sources from '~/components/Web/Sources';
 import ToolCallGroup from './ToolCallGroup';
+import TurnPreamble from './TurnPreamble';
 import Container from './Container';
 import Part from './Part';
 
@@ -564,6 +570,65 @@ const ContentParts = memo(function ContentParts({
     );
   }
 
+  const buildGroupNodes = (group: (typeof groupedParts)[number]): ReactElement[] => {
+    const firstIdx = group.type === 'single' ? group.part.idx : (group.parts[0]?.idx ?? -1);
+    const nodes: ReactElement[] = [];
+    const attribution = renderResumeAttribution(firstIdx);
+    if (attribution != null) {
+      nodes.push(attribution);
+    }
+    if (group.type === 'single') {
+      const { part, idx } = group.part;
+      nodes.push(renderPart(part, idx, idx === lastContentIdx));
+      return nodes;
+    }
+    const { groupId } = group;
+    nodes.push(
+      <ToolCallGroup
+        key={`tool-group-${groupId}`}
+        parts={group.parts}
+        isSubmitting={effectiveIsSubmitting}
+        /** The label part is CONSUMED into the header, not listed in
+         *  `parts` — a filled label at the content tail must still
+         *  mark its group as last or nothing holds the streaming
+         *  cursor until the next delta. */
+        isLast={
+          group.parts.some((p) => p.idx === lastContentIdx) ||
+          group.labelPart?.idx === lastContentIdx
+        }
+        renderPart={renderGroupedPart}
+        lastContentIdx={lastContentIdx}
+        groupAttachments={group.groupAttachments}
+        initialExpansionState={expansionState.get(groupId)}
+        onExpansionChange={(state) => handleGroupExpansionChange(groupId, state)}
+        labelPart={group.labelPart}
+      />,
+    );
+    return nodes;
+  };
+
+  /** Live, progressive collapse: only the CURRENT top-level step (whichever
+   *  group is last right now) stays visible outside "Show work" — the moment
+   *  generation moves on to a new step, the previous one joins the collapsed
+   *  bucket, updating continuously as the turn streams rather than waiting
+   *  for the whole thing to finish. `groupedParts` is a fresh derivation every
+   *  render, so this naturally tracks the stream: each new group appended
+   *  demotes the prior "live" group into the growing preamble the instant it
+   *  arrives. A group holding an unresolved approval is never folded away —
+   *  generation pauses on those, so seeing one at all means it's the thing
+   *  that needs attention, not settled history — bailing out entirely rather
+   *  than trying to interleave it back into a fixed visible/collapsed split.
+   *  Scoped to this plain sequential path only; parallel/multi-agent turns
+   *  and nested activity-phase segments are unaffected. */
+  const preambleCandidates = groupedParts.slice(0, -1);
+  const hasEarlierPendingApproval = preambleCandidates.some((group) =>
+    (group.type === 'single' ? [group.part.part] : group.parts.map(({ part }) => part)).some(
+      hasPendingApprovalInPart,
+    ),
+  );
+  const canCollapsePreamble =
+    !nestedActivityPhase && preambleCandidates.length > 0 && !hasEarlierPendingApproval;
+
   // Sequential content: render parts in order (90% of cases)
   const sequentialContent = (
     <SearchContext.Provider value={{ searchResults }}>
@@ -574,42 +639,16 @@ const ContentParts = memo(function ContentParts({
           <EmptyText />
         </Container>
       )}
-      {groupedParts.flatMap((group) => {
-        const firstIdx = group.type === 'single' ? group.part.idx : (group.parts[0]?.idx ?? -1);
-        const nodes: ReactElement[] = [];
-        const attribution = renderResumeAttribution(firstIdx);
-        if (attribution != null) {
-          nodes.push(attribution);
-        }
-        if (group.type === 'single') {
-          const { part, idx } = group.part;
-          nodes.push(renderPart(part, idx, idx === lastContentIdx));
-          return nodes;
-        }
-        const { groupId } = group;
-        nodes.push(
-          <ToolCallGroup
-            key={`tool-group-${groupId}`}
-            parts={group.parts}
-            isSubmitting={effectiveIsSubmitting}
-            /** The label part is CONSUMED into the header, not listed in
-             *  `parts` — a filled label at the content tail must still
-             *  mark its group as last or nothing holds the streaming
-             *  cursor until the next delta. */
-            isLast={
-              group.parts.some((p) => p.idx === lastContentIdx) ||
-              group.labelPart?.idx === lastContentIdx
-            }
-            renderPart={renderGroupedPart}
-            lastContentIdx={lastContentIdx}
-            groupAttachments={group.groupAttachments}
-            initialExpansionState={expansionState.get(groupId)}
-            onExpansionChange={(state) => handleGroupExpansionChange(groupId, state)}
-            labelPart={group.labelPart}
-          />,
-        );
-        return nodes;
-      })}
+      {canCollapsePreamble ? (
+        <>
+          <TurnPreamble key="turn-preamble">
+            {preambleCandidates.flatMap(buildGroupNodes)}
+          </TurnPreamble>
+          {buildGroupNodes(groupedParts[groupedParts.length - 1])}
+        </>
+      ) : (
+        groupedParts.flatMap(buildGroupNodes)
+      )}
     </SearchContext.Provider>
   );
   if (nestedActivityPhase) {

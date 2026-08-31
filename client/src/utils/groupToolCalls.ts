@@ -7,6 +7,30 @@ export type GroupedPart =
   | { type: 'single'; part: PartWithIndex }
   | { type: 'tool-group'; parts: PartWithIndex[]; labelPart?: PartWithIndex };
 
+type ToolCallWithNestedContent = Agents.ToolCall & {
+  subagent_content?: TMessageContentParts[];
+};
+
+/** Lives here (a leaf utils module, no component imports) rather than in
+ * ToolCallGroup.tsx or ContentParts.tsx, which both need it and would
+ * otherwise form a circular import between them. */
+export function hasPendingApprovalInPart(part: TMessageContentParts): boolean {
+  if (part.type !== ContentTypes.TOOL_CALL) {
+    return false;
+  }
+  const toolCall = part[ContentTypes.TOOL_CALL] as ToolCallWithNestedContent | undefined;
+  if (!toolCall) {
+    return false;
+  }
+  if (toolCall.approval != null && (toolCall.output?.length ?? 0) === 0) {
+    return true;
+  }
+  return (
+    Array.isArray(toolCall.subagent_content) &&
+    toolCall.subagent_content.some(hasPendingApprovalInPart)
+  );
+}
+
 function isGroupableToolCall(part: TMessageContentParts): boolean {
   if (part.type !== ContentTypes.TOOL_CALL) {
     return false;
@@ -71,8 +95,16 @@ export function groupSequentialToolCalls(parts: PartWithIndex[]): GroupedPart[] 
 
   const flushWithoutLabel = () => {
     let toolRun: PartWithIndex[] = [];
+    let toolCount = 0;
+    let runHasReasoning = false;
     const flushToolRun = () => {
-      if (toolRun.length >= 2) {
+      /** A single tool call with no reasoning folded in already renders as its
+       *  own clean, individually-collapsible card (see ToolCall.tsx) - wrapping
+       *  it in ToolCallGroup too would just add a redundant second chevron. Only
+       *  worth a group at count 1 when there's a Thoughts/commentary block to
+       *  fold into it; a bare run of 1 falls through to the plain `single` path
+       *  exactly as before. */
+      if (toolCount >= 2 || (toolCount === 1 && runHasReasoning)) {
         result.push({ type: 'tool-group', parts: [...toolRun] });
       } else {
         for (const p of toolRun) {
@@ -80,14 +112,32 @@ export function groupSequentialToolCalls(parts: PartWithIndex[]): GroupedPart[] 
         }
       }
       toolRun = [];
+      toolCount = 0;
+      runHasReasoning = false;
     };
     for (const p of currentBlock) {
       if (isGroupableToolCall(p.part)) {
         toolRun.push(p);
-      } else {
-        flushToolRun();
-        result.push({ type: 'single', part: p });
+        toolCount += 1;
+        continue;
       }
+      const isReasoning =
+        p.part.type === ContentTypes.THINK ||
+        (p.part.type === ContentTypes.TEXT && (p.part as { phase?: string }).phase === 'commentary');
+      /** Reasoning/commentary interleaved INSIDE an already-started tool run is
+       *  carried along rather than breaking it, so "web_search -> Thoughts ->
+       *  read_page" still collapses into one group once settled (matching the
+       *  ACTIVITY_LABEL path, which already tolerates THINK parts inside a
+       *  group - see ToolCallGroup's getToolMeta filtering). A leading
+       *  Thoughts block with no run started yet (toolRun is empty) stays
+       *  standalone - it precedes any action, not a record of one. */
+      if (isReasoning && toolRun.length > 0) {
+        toolRun.push(p);
+        runHasReasoning = true;
+        continue;
+      }
+      flushToolRun();
+      result.push({ type: 'single', part: p });
     }
     flushToolRun();
     currentBlock = [];
